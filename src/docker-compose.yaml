@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  postgres:
+    image: "postgres:13"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dbname
+    ports:
+      - "5432:5432"
+
+  user-service:
+    build:
+      context: ./User Service
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    depends_on:
+      - rabbitmq
+      - postgres
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/dbname
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+
+  news-aggregator-service:
+    build:
+      context: ./News Aggregator Service
+      dockerfile: Dockerfile
+    ports:
+      - "5002:5002"
+    depends_on:
+      - rabbitmq
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+
+  ai-processing-service:
+    build:
+      context: ./AI Processing Service
+      dockerfile: Dockerfile
+    ports:
+      - "5003:5003"
+    depends_on:
+      - rabbitmq
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+
+#  notification-service:
+#    build:
+#      context: ./notification-service
+#      dockerfile: Dockerfile
+#    ports:
+#      - "5004:5004"
+#    depends_on:
+#      - rabbitmq
+#    environment:
+#      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
