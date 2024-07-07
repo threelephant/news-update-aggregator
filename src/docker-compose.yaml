@@ -1,11 +1,26 @@
 version: '3.8'
 
+networks:
+  mynetwork:
+    driver: bridge
+
 services:
   rabbitmq:
     image: "rabbitmq:3-management"
+    container_name: "rabbitmq"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - mynetwork
 
   postgres:
     image: "postgres:13"
@@ -15,6 +30,8 @@ services:
       POSTGRES_DB: dbname
     ports:
       - "5432:5432"
+    networks:
+      - mynetwork
 
   user-service:
     build:
@@ -27,7 +44,9 @@ services:
       - postgres
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/dbname
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_URL=rabbitmq
+    networks:
+      - mynetwork
 
   news-aggregator-service:
     build:
@@ -38,7 +57,9 @@ services:
     depends_on:
       - rabbitmq
     environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_URL=rabbitmq
+    networks:
+      - mynetwork
 
   ai-processing-service:
     build:
@@ -46,10 +67,16 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5003:5003"
+    restart: always
     depends_on:
+      rabbitmq:
+        condition: service_healthy
+    links:
       - rabbitmq
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    networks:
+      - mynetwork
 
 #  notification-service:
 #    build:

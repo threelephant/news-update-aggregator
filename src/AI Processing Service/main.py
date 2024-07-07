@@ -1,9 +1,15 @@
+import asyncio
+import json
+import os
+
+import pika
 from fastapi import FastAPI
 from pydantic import BaseModel
-import pika
-import json
 
 app = FastAPI()
+
+# Get RabbitMQ URL from environment variable
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 
 class News(BaseModel):
@@ -17,29 +23,29 @@ async def generate_summary(news: News):
     return {"summary": summary}
 
 
-def callback(ch, method, properties, body):
+def process_news(ch, method, properties, body):
     news_data = json.loads(body)
-    # Process news data and generate summaries
-    summaries = []
-    for news in news_data['results']:
-        summary = "Generated Summary"  # Replace with actual AI call to GPT
-        summaries.append({"title": news['title'], "summary": summary})
+    summaries = [{"title": news['title'], "summary": "Generated Summary"} for news in news_data['results']]
 
-    # Publish to RabbitMQ
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
     channel = connection.channel()
     channel.queue_declare(queue='summary_queue')
     channel.basic_publish(exchange='', routing_key='summary_queue', body=json.dumps(summaries))
     connection.close()
 
 
-@app.on_event("startup")
-async def startup_event():
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+async def rabbitmq_listener():
+    loop = asyncio.get_event_loop()
+    connection = await loop.run_in_executor(None, lambda: pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL)))
     channel = connection.channel()
     channel.queue_declare(queue='news_queue')
-    channel.basic_consume(queue='news_queue', on_message_callback=callback, auto_ack=True)
-    channel.start_consuming()
+    channel.basic_consume(queue='news_queue', on_message_callback=process_news, auto_ack=True)
+    await loop.run_in_executor(None, channel.start_consuming)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(rabbitmq_listener())
 
 
 if __name__ == '__main__':

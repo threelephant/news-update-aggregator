@@ -4,6 +4,11 @@ FROM python:3.10.4-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Install psycopg2
+RUN apt-get update \
+    && apt-get -y install libpq-dev gcc \
+    && pip install psycopg2
+
 # Copy the requirements file into the container
 COPY requirements.txt .
 
