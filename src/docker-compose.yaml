@@ -78,13 +78,13 @@ services:
     networks:
       - mynetwork
 
-#  notification-service:
-#    build:
-#      context: ./notification-service
-#      dockerfile: Dockerfile
-#    ports:
-#      - "5004:5004"
-#    depends_on:
-#      - rabbitmq
-#    environment:
-#      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+  notification-service:
+    build:
+      context: ./Notification Service
+      dockerfile: Dockerfile
+    ports:
+      - "5004:5004"
+    depends_on:
+      - rabbitmq
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
