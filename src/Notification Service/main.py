@@ -1,20 +1,19 @@
-import json
 import os
+import json
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
-import pika
+import aio_pika
+import asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import requests
 
 app = FastAPI()
 
-rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
+rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 email_user = os.getenv("EMAIL_USER", "your-email@example.com")
 email_password = os.getenv("EMAIL_PASSWORD", "your-email-password")
-telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "your-telegram-bot-token")
-telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "your-telegram-chat-id")
 
 
 class Notification(BaseModel):
@@ -42,21 +41,25 @@ def send_email(recipient, message):
         print(f"Failed to send email: {e}")
 
 
-def callback(ch, method, properties, body):
-    notification_data = json.loads(body)
-    for notification in notification_data:
-        send_email(notification['recipient'], notification['message'])
+async def callback(message: aio_pika.abc.AbstractIncomingMessage) -> None:
+    async with message.process():
+        notification_data = json.loads(message.body)
+        for notification in notification_data:
+            send_email(notification['recipient'], notification['message'])
+
+
+async def consume():
+    connection = await aio_pika.connect_robust(rabbitmq_url)
+    channel = await connection.channel()
+    queue = await channel.declare_queue("notification_queue", durable=True)
+    await queue.consume(callback)
+    print("Started consuming from notification_queue")
 
 
 @app.on_event("startup")
 async def startup_event():
-    connection_parameters = pika.URLParameters(rabbitmq_url)
-    connection = pika.BlockingConnection(connection_parameters)
-    channel = connection.channel()
-    channel.queue_declare(queue='notification_queue')
-    channel.basic_consume(queue='notification_queue', on_message_callback=callback, auto_ack=True)
-    print("Started consuming from notification_queue")
-    channel.start_consuming()
+    loop = asyncio.get_event_loop()
+    loop.create_task(consume())
 
 
 @app.get("/")
