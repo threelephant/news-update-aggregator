@@ -5,7 +5,10 @@ import os
 import pika
 from fastapi import FastAPI
 from pydantic import BaseModel
+import google.generativeai as genai
+from dotenv import load_dotenv
 
+load_dotenv()
 app = FastAPI()
 
 # Get RabbitMQ URL from environment variable
@@ -19,8 +22,12 @@ class News(BaseModel):
 
 @app.post("/generate-summary")
 async def generate_summary(news: News):
-    summary = "Generated Summary"  # Replace with actual AI call to GPT
-    return {"summary": summary}
+    genai.configure(api_key="AIzaSyAca8llHH2BFvcROKDCmBVGAyrxJR2cZI0")
+
+    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    response = model.generate_content("Hello, tell me please a story").text
+
+    return {"summary": response}
 
 
 def process_news(ch, method, properties, body):

@@ -7,9 +7,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import requests
+from dotenv import load_dotenv
 
 app = FastAPI()
+load_dotenv()
 
 rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 email_user = os.getenv("EMAIL_USER", "your-email@example.com")
