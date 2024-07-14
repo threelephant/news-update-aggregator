@@ -13,6 +13,7 @@ app = FastAPI()
 
 # Get RabbitMQ URL from environment variable
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+GEMINI_AI = os.getenv("GEMINI_API_KEY", "empty")
 
 
 class News(BaseModel):
@@ -22,10 +23,10 @@ class News(BaseModel):
 
 @app.post("/generate-summary")
 async def generate_summary(news: News):
-    genai.configure(api_key="AIzaSyAca8llHH2BFvcROKDCmBVGAyrxJR2cZI0")
+    genai.configure(api_key=GEMINI_AI)
 
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    response = model.generate_content("Hello, tell me please a story").text
+    response = model.generate_content(news.content).text
 
     return {"summary": response}
 

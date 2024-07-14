@@ -1,11 +1,14 @@
+import os
+
 import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-news_api = 'pub_47925cee563b6e01a191693abcbb2b7ae99ad'
 load_dotenv()
 app = FastAPI()
+
+NEWS_DATA_API = os.getenv('NEWS_DATA_API', 'empty')
 
 
 class Preferences(BaseModel):
@@ -14,7 +17,7 @@ class Preferences(BaseModel):
 
 @app.post("/fetch-news")
 async def fetch_news(preferences: Preferences):
-    response = requests.get(f'https://newsdata.io/api/1/latest?apikey={news_api}&q={preferences.category}')
+    response = requests.get(f'https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&q={preferences.category}')
     news_data = response.json()
     return news_data
     # Publish to RabbitMQ
