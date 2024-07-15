@@ -88,3 +88,10 @@ services:
       - rabbitmq
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+
+  news-frontend:
+    build: ./news-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - mynetwork
