@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # FastAPI app
-app = FastAPI()
+app = FastAPI(root_path="/api")
 
 # Security settings
 SECRET_KEY = "your_secret_key"
