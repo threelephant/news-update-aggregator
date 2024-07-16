@@ -1,10 +1,11 @@
 import asyncio
 
+import dotenv
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import requests
-import genai
+import google.generativeai as genai
 from database import SessionLocal, engine, Base
 from models import User, News, Preferences
 import redis
@@ -12,6 +13,7 @@ import json
 import pika
 import logging
 import os
+from dotenv import load_dotenv
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -35,8 +37,9 @@ channel = connection.channel()
 channel.queue_declare(queue='news_queue')
 
 # Environment Variables
+dotenv.load_dotenv()
 NEWS_DATA_API = os.getenv("NEWS_DATA_API")
-GEMINI_AI = os.getenv("GEMINI_AI")
+GEMINI_AI = os.getenv("GEMINI_API_KEY")
 
 
 # Database dependency
@@ -109,14 +112,14 @@ async def handle_news_request(body):
     preferences = Preferences(**message['preferences'])
 
     # Check cache
-    cached_news = cache.get(username)
+    cached_news = await cache.get(username)
     if cached_news:
         logger.info("Cache hit")
         news_data = json.loads(cached_news)
     else:
         logger.info("Cache miss")
         news_data = await fetch_news(preferences)
-        cache.set(username, json.dumps(news_data))
+        await cache.set(username, json.dumps(news_data))
 
     # Analyze news using AI
     analyzed_news = await generate_summary(News(content=news_data['results'][0]['description']))

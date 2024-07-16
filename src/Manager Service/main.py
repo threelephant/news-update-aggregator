@@ -174,6 +174,7 @@ def fetch_news(username: str):
     # Here, you would interact with the Accessor Service
     print(f"Fetching news for {username}...")
 
+
 if __name__ == '__main__':
     import uvicorn
 
