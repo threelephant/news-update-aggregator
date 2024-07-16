@@ -1,21 +1,29 @@
-import asyncio
-
-import dotenv
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
-import requests
-import google.generativeai as genai
-from database import SessionLocal, engine, Base
-from models import User, News, Preferences
-import redis
-import json
-import pika
-import logging
 import os
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, String, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+import requests
+import redis
+import pika
+import json
+import asyncio
+import google.generativeai as genai
+
+# Load environment variables
 from dotenv import load_dotenv
 
-# Initialize FastAPI app
+load_dotenv()
+
+# Setup FastAPI app
 app = FastAPI()
 
 # Setup logging
@@ -28,21 +36,59 @@ logger = logging.getLogger(__name__)
 # Setup Redis for caching
 cache = redis.Redis(host='localhost', port=6379, db=0)
 
-# Setup Database
-Base.metadata.create_all(bind=engine)
-
 # Setup RabbitMQ
 connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
 channel = connection.channel()
 channel.queue_declare(queue='news_queue')
 
-# Environment Variables
-dotenv.load_dotenv()
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:15432/dbname")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Security settings
+SECRET_KEY = "your_secret_key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# OAuth2PasswordBearer for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Environment Variables for External APIs
 NEWS_DATA_API = os.getenv("NEWS_DATA_API")
-GEMINI_AI = os.getenv("GEMINI_API_KEY")
+GEMINI_AI = os.getenv("GEMINI_AI")
 
 
-# Database dependency
+# Database models
+class User(Base):
+    __tablename__ = "users"
+    username = Column(String, primary_key=True, index=True)
+    password = Column(String)
+    preferences = Column(JSON, nullable=True)
+
+
+Base.metadata.create_all(bind=engine)
+
+
+# Helper functions
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -51,42 +97,109 @@ def get_db():
         db.close()
 
 
-@app.post("/validate_credentials")
-async def validate_credentials(username: str, password: str, db: Session = Depends(get_db)):
+# Pydantic models
+class Preferences(BaseModel):
+    category: str
+
+
+class News(BaseModel):
+    content: str
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+
+class UserPreferences(BaseModel):
+    username: str
+    preferences: list[str]
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: str
+
+
+@app.post("/register", response_model=UserCreate, status_code=201)
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == user.username).first():
+        raise HTTPException(status_code=400, detail="User already exists.")
+
+    hashed_password = get_password_hash(user.password)
+    new_user = User(username=user.username, password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+
+@app.post("/token", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.post("/save_preferences", response_model=dict)
+def save_preferences(user_prefs: UserPreferences, db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    if user_prefs.username != username:
+        raise HTTPException(status_code=403, detail="Not authorized to update preferences.")
+
     user = db.query(User).filter(User.username == username).first()
-    if user and user.verify_password(password):
-        return {"token": "fake-jwt-token"}  # You should replace with real JWT token
-    raise HTTPException(status_code=400, detail="Invalid credentials")
+    user.preferences = user_prefs.preferences
+    db.commit()
+    db.refresh(user)
+    return {"status": "Preferences saved."}
 
 
-@app.post("/save_preferences")
-async def save_preferences(username: str, preferences: Preferences, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == username).first()
-    if user:
-        user.preferences = json.dumps(preferences.dict())
-        db.commit()
-        return {"status": "Preferences saved"}
-    raise HTTPException(status_code=400, detail="User not found")
+@app.post("/news", response_model=dict)
+def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+                 token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
 
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
 
-@app.post("/news")
-async def request_news(username: str, preferences: Preferences, db: Session = Depends(get_db)):
-    # Publish to RabbitMQ
-    publish_to_queue(username, preferences)
+    if user_prefs.username != username:
+        raise HTTPException(status_code=403, detail="Not authorized to request news.")
+
+    # Send the request to the queue (simulated with a background task)
+    background_tasks.add_task(fetch_news, username)
     return {"status": "News request initiated."}
 
 
-@app.post("/process_news")
-async def process_news(username: str, news: News):
-    # Analyze and summarize news using AI
-    analyzed_news = await generate_summary(news)
-    return analyzed_news
+def fetch_news(username: str):
+    # Here, you would interact with the Accessor Service
+    print(f"Fetching news for {username}...")
 
 
-async def fetch_news(preferences: Preferences):
-    response = requests.get(f'https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&q={preferences.category}')
-    news_data = response.json()
-    return news_data
+# RabbitMQ callback
+def process_news_request(ch, method, properties, body):
+    asyncio.run(handle_news_request(body))
 
 
 async def generate_summary(news: News):
@@ -94,16 +207,6 @@ async def generate_summary(news: News):
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
     response = model.generate_content(news.content).text
     return {"summary": response}
-
-
-def publish_to_queue(username: str, preferences: Preferences):
-    message = {"username": username, "preferences": preferences.dict()}
-    channel.basic_publish(exchange='', routing_key='news_queue', body=json.dumps(message))
-    logger.info(f"Published to queue: {message}")
-
-
-def process_news_request(ch, method, properties, body):
-    asyncio.run(handle_news_request(body))
 
 
 async def handle_news_request(body):
@@ -118,7 +221,7 @@ async def handle_news_request(body):
         news_data = json.loads(cached_news)
     else:
         logger.info("Cache miss")
-        news_data = await fetch_news(preferences)
+        news_data = fetch_news(preferences.category)
         await cache.set(username, json.dumps(news_data))
 
     # Analyze news using AI
