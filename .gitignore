@@ -1,3 +1,4 @@
 .idea
 logs
 .pytest_cache
+redis

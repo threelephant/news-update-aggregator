@@ -1,5 +1,7 @@
+from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String
-from .database import Base
+from database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -8,3 +10,11 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     password = Column(String)
     preferences = Column(String)
+
+
+class Preferences(BaseModel):
+    category: str
+
+
+class News(BaseModel):
+    content: str

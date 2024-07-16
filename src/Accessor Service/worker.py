@@ -1,9 +1,9 @@
 import pika
 import json
 from sqlalchemy.orm import Session
-from .database import get_db
-from .utils import get_cached_news, cache_news
-from .models import User
+from database import get_db
+from utils import get_cached_news, cache_news
+from models import User
 
 
 def process_news_request(ch, method, properties, body):
