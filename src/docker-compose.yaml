@@ -46,70 +46,42 @@ services:
       - ./redis/data:/data
     command: [ "redis-server", "--save 60 1",  "--loglevel warning" ]
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10
     networks:
       - mynetwork
 
-  user-service:
+  manager-service:
     build:
-      context: ./User Service
-      dockerfile: Dockerfile
-    ports:
-      - "5001:5001"
-    depends_on:
-#      rabbitmq:
-#        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/dbname
-      - RABBITMQ_URL=rabbitmq
-    networks:
-      - mynetwork
-
-  news-aggregator-service:
-    build:
-      context: ./News Aggregator Service
-      dockerfile: Dockerfile
-    ports:
-      - "5002:5002"
-    depends_on:
-      - rabbitmq
-    environment:
-      - RABBITMQ_URL=rabbitmq
-    networks:
-      - mynetwork
-
-  ai-processing-service:
-    build:
-      context: ./AI Processing Service
-      dockerfile: Dockerfile
-    ports:
-      - "5003:5003"
-    restart: always
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    links:
-      - rabbitmq
-    environment:
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    networks:
-      - mynetwork
-
-  notification-service:
-    build:
-      context: ./Notification Service
+      context: ./Manager Service
       dockerfile: Dockerfile
     ports:
       - "5004:5004"
-    depends_on:
-      - rabbitmq
     environment:
+      - ACCESSOR_SERVICE_URL=http://accessor-service:5005
+    networks:
+      - mynetwork
+
+  accessor-service:
+    build:
+      context: ./Accessor Service
+      dockerfile: Dockerfile
+    ports:
+      - "5005:5005"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/dbname
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    networks:
+      - mynetwork
 
   news-frontend:
     build: ./news-frontend

@@ -23,6 +23,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Environment Variables for External APIs
+NEWS_DATA_API = os.getenv("NEWS_DATA_API")
+GEMINI_AI = os.getenv("GEMINI_AI")
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+
 # Setup FastAPI app
 app = FastAPI()
 
@@ -37,7 +42,8 @@ logger = logging.getLogger(__name__)
 cache = redis.Redis(host='localhost', port=6379, db=0)
 
 # Setup RabbitMQ
-connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+logger.debug(RABBITMQ_URL)
+connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
 channel = connection.channel()
 channel.queue_declare(queue='news_queue')
 
@@ -56,9 +62,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # OAuth2PasswordBearer for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Environment Variables for External APIs
-NEWS_DATA_API = os.getenv("NEWS_DATA_API")
-GEMINI_AI = os.getenv("GEMINI_AI")
 
 
 # Database models
