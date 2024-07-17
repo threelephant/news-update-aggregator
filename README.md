@@ -5,6 +5,7 @@ The **Personalized News Update Aggregator** is a microservice-based application 
 
 ## System Diagram
 ![system-diagram](https://github.com/user-attachments/assets/3c293f18-0aad-4001-b788-937d9b38420a)
+![system-diagram2](https://github.com/user-attachments/assets/1357ed7d-98fd-4546-8f7a-56508afc540a)
 
 ## Steps to Run the Application Locally
 
