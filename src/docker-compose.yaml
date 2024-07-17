@@ -76,6 +76,7 @@ services:
       - accessor-service
     environment:
       - ACCESSOR_SERVICE_URL=http://accessor-service:5005
+#      - DAPR_RUNTIME_HOST=manager-dapr
     networks:
       - mynetwork
 
@@ -90,19 +91,16 @@ services:
     command: [ "./daprd",
                "-app-port", "5004",
                "-app-id", "manager",
-               "-app-protocol", "http",
-               "-dapr-http-port", "3500",
-               "-components-path", "./dapr/components",
-               "-config", "./dapr/config.yaml",
-               "-log-level", "debug"
+#               "-dapr-http-port", "3500",
+               "-resources-path", "./dapr/components",
+               "-config", "./dapr/components/rabbitmq-pubsub.yaml",
+#               "-log-level", "debug"
     ]
     volumes:
       - "./dapr/:/dapr"
-    networks:
-      - mynetwork
-  #    depends_on:
-#      - manager-service
-#    network_mode: "service:manager-service"
+    depends_on:
+    - manager-service
+    network_mode: "service:manager-service"
 
   accessor-service:
     build:
@@ -135,19 +133,25 @@ services:
     command: [ "./daprd",
                "-app-port", "5005",
                "-app-id", "accessor",
-               "-app-protocol", "http",
-               "-dapr-http-port", "3500",
+#               "--placement-host-address", "placement:50006",
+#               "-dapr-http-port", "3500",
+#               "--dapr-grpc-port", "50001",
                "-components-path", "./dapr/components",
                "-config", "./dapr/config.yaml",
-               "-log-level", "debug"
+#               "-log-level", "debug"
     ]
     volumes:
       - "./dapr/:/dapr"
-    networks:
-      - mynetwork
-#    depends_on:
-#      - accessor-service
-#    network_mode: "service:manager-accessor"
+    depends_on:
+      - accessor-service
+    network_mode: "service:accessor-service"
+
+
+  placement:
+    image: "daprio/dapr"
+    command: [ "./placement", "--port", "50006" ]
+    ports:
+      - "50006:50006"
 
   news-frontend:
     build: ./news-frontend

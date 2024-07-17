@@ -78,11 +78,23 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @app.post("/preferences", response_model=dict)
-def save_preferences(user_prefs: UserPreferences, token: str = Depends(oauth2_scheme)):
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.post(f"{ACCESSOR_SERVICE_URL}/save_preferences", json=user_prefs.dict(), headers=headers)
+async def save_preferences(user_prefs: UserPreferences, token: str = Depends(oauth2_scheme)):
+    headers = {"Authorization": f"{token}"}
+
+    payload = {**user_prefs.dict(), **headers}
+    logger.info(payload)
+
+    with DaprClient() as dapr_client:
+        response = await dapr_client.invoke_method_async(
+            app_id="accessor",
+            method_name="/save_preferences",
+            data=json.dumps(payload).encode('utf-8'),
+            http_verb="POST"
+        )
+
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=response.json())
+
     return response.json()
 
 
@@ -93,14 +105,6 @@ def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks,
     # if response.status_code != 200:
     #     raise HTTPException(status_code=response.status_code, detail=response.json())
 
-    # Send the news request to the RabbitMQ queue
-    # connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
-    # channel = connection.channel()
-    # channel.queue_declare(queue='news_queue')
-    #
-    # message = json.dumps({"username": user_prefs.username, "preferences": user_prefs.preferences})
-    # channel.basic_publish(exchange='', routing_key='news_queue', body=message)
-    # connection.close()
     message = json.dumps({"username": user_prefs.username, "preferences": user_prefs.preferences})
     with DaprClient() as dapr_client:
         resp = dapr_client.publish_event(

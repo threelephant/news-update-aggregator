@@ -1,5 +1,6 @@
 import os
 import logging
+import ssl
 import threading
 from datetime import datetime, timedelta
 from typing import Optional
@@ -31,10 +32,8 @@ load_dotenv()
 NEWS_DATA_API = os.getenv("NEWS_DATA_API")
 GEMINI_AI = os.getenv("GEMINI_API_KEY")
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.example.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "user@example.com")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "password")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 
 # Setup FastAPI app
 app = FastAPI()
@@ -126,6 +125,7 @@ class UserCreate(BaseModel):
 class UserPreferences(BaseModel):
     username: str
     preferences: list[str]
+    Authorization: str
 
 
 class Token(BaseModel):
@@ -162,11 +162,12 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 @app.post("/save_preferences", response_model=dict)
-def save_preferences(user_prefs: UserPreferences, db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+def save_preferences(user_prefs: UserPreferences, db: Session = Depends(get_db)):
+    print("kjbfvisbfjudebfjsdebfkjesfjkdsbjk")
     credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(user_prefs.Authorization, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -193,17 +194,17 @@ def news_handler(event_data=Body()):
 @app.post("/news", response_model=dict)
 async def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
                        token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    if user_prefs.username != username:
-        raise HTTPException(status_code=403, detail="Not authorized to request news.")
+    # credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+    # try:
+    #     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    #     username = payload.get("sub")
+    #     if username is None:
+    #         raise credentials_exception
+    # except JWTError:
+    #     raise credentials_exception
+    #
+    # if user_prefs.username != username:
+    #     raise HTTPException(status_code=403, detail="Not authorized to request news.")
 
     background_tasks.add_task(handle_news_request, user_prefs)
 
@@ -247,42 +248,44 @@ async def handle_news_request(body):
     news_data = fetch_news(categories)
     # await cache.set(username, json.dumps(news_data))
 
-    # Analyze news using AI
     analyzed_news = []
+    # Analyze news using AI
     for news in news_data["results"]:
         if news["description"] is not None:
             summary = await generate_summary(News(content=news['description']))
             if summary is not None:
                 analyzed_news.append(await generate_summary(News(content=news['description'])))
 
-    # send_email(username, analyzed_news)
+    send_email(username, analyzed_news)
     logger.info(f"Analyzed news for {username}: {analyzed_news}")
 
 
 def fetch_news(category: str):
-    # Simulate fetching news from an external API
     response = requests.get(f"https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&q={category}")
     return response.json()
 
 
 def send_email(username: str, analyzed_news: list):
-    # Fetch user email from the database
-    db = next(get_db())
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        logger.error(f"User {username} not found")
-        return
+    logger.info(f"Sending starting, {username}")
+    email_sender = os.environ.get("EMAIL_SENDER")
+    email_password = os.environ.get("EMAIL_PASSWORD")
+    email_receiver = os.environ.get("EMAIL_RECEIVER")
 
-    email_body = f"Hello {username},\n\nHere is your news summary:\n\n{' '.join(analyzed_news)}\n\nBest regards,\nNews Aggregator"
+    summaries = "\n".join([item["summary"] for item in analyzed_news])
+    email_body = f"Hello {username},\n\nHere is your news summary:\n\n{summaries}\n\nBest regards,\nNews Aggregator"
+
+    logger.info(f"Body email: {email_body}")
     msg = MIMEText(email_body)
     msg['Subject'] = 'Your News Summary'
-    msg['From'] = SMTP_USERNAME
-    msg['To'] = user.email
+    msg['From'] = email_sender
+    msg['To'] = email_receiver
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.sendmail(SMTP_USERNAME, [user.email], msg.as_string())
+    context = ssl.create_default_context()
+    logger.info(SMTP_SERVER)
+    logger.info(SMTP_PORT)
+    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
+        server.login(email_sender, email_password)
+        server.sendmail(email_sender, email_receiver, msg.as_string())
         logger.info(f"Email sent to {username}")
 
 
