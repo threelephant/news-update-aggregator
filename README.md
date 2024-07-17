@@ -4,6 +4,7 @@
 The **Personalized News Update Aggregator** is a microservice-based application designed to aggregate news and technology updates tailored to individual user preferences. The system fetches the latest news and selects the most interesting articles using AI, optionally generating concise summaries. Users receive these updates via their preferred communication channels, such as email.
 
 ## System Diagram
+![system-diagram](https://github.com/user-attachments/assets/3c293f18-0aad-4001-b788-937d9b38420a)
 
 ## Steps to Run the Application Locally
 
