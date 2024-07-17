@@ -1,10 +1,13 @@
 import os
 import logging
+import random
 import ssl
 import threading
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
+import aioredis
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from pydantic import BaseModel
@@ -46,8 +49,7 @@ logging.basicConfig(level=logging.INFO, filename='logs/accessor.log',
                     format='%(asctime)s:%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
 
-# Setup Redis for caching
-cache = redis.Redis(host='localhost', port=6379, db=0)
+REDIS_URL = os.getenv("REDIS_URL", 'redis://localhost')
 
 # Setup RabbitMQ
 logger.debug(RABBITMQ_URL)
@@ -119,12 +121,10 @@ class News(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
-    email: str  # Add email to user creation
 
 
 class UserPreferences(BaseModel):
     username: str
-    preferences: list[str]
     Authorization: str
 
 
@@ -163,7 +163,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @app.post("/save_preferences", response_model=dict)
 def save_preferences(user_prefs: UserPreferences, db: Session = Depends(get_db)):
-    print("kjbfvisbfjudebfjsdebfkjesfjkdsbjk")
     credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
 
     try:
@@ -216,63 +215,70 @@ def process_news_request(ch, method, properties, body):
     asyncio.run(handle_news_request(body))
 
 
-async def generate_summary(news: News):
+async def generate_summary(news, categories):
     genai.configure(api_key=GEMINI_AI)
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    logger.info(news.content)
+    logger.info(news)
     try:
-        response = model.generate_content(f"Provide short summary of this news: {news.content}").text
+        response = model.generate_content(f"Please pick the most interesting news based on my preferences and "
+                                          f"generate concise summaries: {categories}\n\n "
+                                          f"Here are the news:\n {news}").text
     except Exception:
         return None
 
-    # await asyncio.sleep(10)
-    return {"summary": response}
+    return response
+
+
+def get_user_preferences(db: Session, username: str):
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user.preferences
 
 
 async def handle_news_request(body):
     message = json.loads(body)
     username = message['username']
-    preferences = message['preferences']
+
     # username = body.username
-    # preferences = body.preferences
+    db = SessionLocal()
+    try:
+        preferences = get_user_preferences(db, username)
+    finally:
+        db.close()
 
-    categories = "&".join(preferences)
+    categories = " OR ".join(preferences)
 
-    # Check cache
-    # cached_news = await cache.get(username)
-    # if cached_news:
-    #     logger.info("Cache hit")
-    #     news_data = json.loads(cached_news)
-    # else:
-    #     logger.info("Cache miss")
-    news_data = fetch_news(categories)
-    # await cache.set(username, json.dumps(news_data))
+    cache = aioredis.from_url(REDIS_URL)
+    cached_news = await cache.get(username)
+    if cached_news is not None:
+        logger.info("Cache hit")
+        news_data = json.loads(cached_news)["results"]
+    else:
+        logger.info("Cache miss")
+        news_data = fetch_news(categories)
+        await cache.set(username, json.dumps(news_data), ex=7200)
 
-    analyzed_news = []
-    # Analyze news using AI
-    for news in news_data["results"]:
-        if news["description"] is not None:
-            summary = await generate_summary(News(content=news['description']))
-            if summary is not None:
-                analyzed_news.append(await generate_summary(News(content=news['description'])))
+    formatted_news = "\n".join([f"Title: {item['title']}\nDescription: {item['description']}"
+                                for item in news_data["results"]])
+    summary = await generate_summary(formatted_news, categories)
 
-    send_email(username, analyzed_news)
-    logger.info(f"Analyzed news for {username}: {analyzed_news}")
+    send_email(username, summary)
+    logger.info(f"Analyzed news for {username}: {summary}")
 
 
 def fetch_news(category: str):
-    response = requests.get(f"https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&q={category}")
+    response = requests.get(f"https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&language=en&q={category}")
     return response.json()
 
 
-def send_email(username: str, analyzed_news: list):
+def send_email(username: str, analyzed_news: str):
     logger.info(f"Sending starting, {username}")
     email_sender = os.environ.get("EMAIL_SENDER")
     email_password = os.environ.get("EMAIL_PASSWORD")
     email_receiver = os.environ.get("EMAIL_RECEIVER")
 
-    summaries = "\n".join([item["summary"] for item in analyzed_news])
-    email_body = f"Hello {username},\n\nHere is your news summary:\n\n{summaries}\n\nBest regards,\nNews Aggregator"
+    email_body = f"Hello {username},\n\nHere is your news summary:\n\n{analyzed_news}\n\nBest regards,\nNews Aggregator"
 
     logger.info(f"Body email: {email_body}")
     msg = MIMEText(email_body)
