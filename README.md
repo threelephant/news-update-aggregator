@@ -47,6 +47,13 @@ The **Personalized News Update Aggregator** is a microservice-based application 
 
 ## Instructions for Testing the Application
 
+### Using integration tests
+Make sure Manager Service is running locally on http://localhost:5004 and you are using its virtual environment. Run the tests using pytest:
+```commandline
+cd tests
+python -m pytest manager_tests.py 
+```
+These tests will send HTTP requests to the specified URLs, ensuring that the API endpoints function as expected.
 ### Using Swagger
 1. Open your browser and navigate to:
    - **Manager Service:** `http://localhost:5005/docs`
