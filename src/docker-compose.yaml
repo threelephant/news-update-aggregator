@@ -79,6 +79,31 @@ services:
     networks:
       - mynetwork
 
+  manager-dapr:
+    image: "daprio/daprd:edge"
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+        window: 120s
+    command: [ "./daprd",
+               "-app-port", "5004",
+               "-app-id", "manager",
+               "-app-protocol", "http",
+               "-dapr-http-port", "3500",
+               "-components-path", "./dapr/components",
+               "-config", "./dapr/config.yaml",
+               "-log-level", "debug"
+    ]
+    volumes:
+      - "./dapr/:/dapr"
+    networks:
+      - mynetwork
+  #    depends_on:
+#      - manager-service
+#    network_mode: "service:manager-service"
+
   accessor-service:
     build:
       context: ./Accessor Service
@@ -98,6 +123,31 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     networks:
       - mynetwork
+
+  accessor-dapr:
+    image: "daprio/daprd:edge"
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+        window: 120s
+    command: [ "./daprd",
+               "-app-port", "5005",
+               "-app-id", "accessor",
+               "-app-protocol", "http",
+               "-dapr-http-port", "3500",
+               "-components-path", "./dapr/components",
+               "-config", "./dapr/config.yaml",
+               "-log-level", "debug"
+    ]
+    volumes:
+      - "./dapr/:/dapr"
+    networks:
+      - mynetwork
+#    depends_on:
+#      - accessor-service
+#    network_mode: "service:manager-accessor"
 
   news-frontend:
     build: ./news-frontend

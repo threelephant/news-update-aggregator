@@ -1,0 +1,27 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: rabbitmq-pubsub
+  namespace: default
+spec:
+  type: pubsub.rabbitmq
+  version: v1
+  metadata:
+  - name: host
+    value: "amqp://guest:guest@localhost:5672/"
+  - name: queueName
+    value: "news_queue"
+  - name: durable
+    value: "true"
+  - name: deleteWhenUnused
+    value: "false"
+  - name: autoAck
+    value: "false"
+  - name: ttlInSeconds
+    value: 5
+  - name: prefetchCount
+    value: 3
+  - name: exclusive
+    value: false
+  - name: maxPriority
+    value: 5

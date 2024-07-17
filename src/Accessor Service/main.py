@@ -1,9 +1,10 @@
 import os
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, JSON
@@ -17,6 +18,9 @@ import pika
 import json
 import asyncio
 import google.generativeai as genai
+import smtplib
+from email.mime.text import MIMEText
+from dapr.ext.fastapi import DaprApp
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -25,11 +29,16 @@ load_dotenv()
 
 # Environment Variables for External APIs
 NEWS_DATA_API = os.getenv("NEWS_DATA_API")
-GEMINI_AI = os.getenv("GEMINI_AI")
+GEMINI_AI = os.getenv("GEMINI_API_KEY")
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.example.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "user@example.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "password")
 
 # Setup FastAPI app
 app = FastAPI()
+dapr_app = DaprApp(app)
 
 # Setup logging
 if not os.path.exists('logs'):
@@ -61,7 +70,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2PasswordBearer for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 
 
 # Database models
@@ -112,6 +120,7 @@ class News(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
+    email: str  # Add email to user creation
 
 
 class UserPreferences(BaseModel):
@@ -174,11 +183,17 @@ def save_preferences(user_prefs: UserPreferences, db: Session = Depends(get_db),
     return {"status": "Preferences saved."}
 
 
-@app.post("/news", response_model=dict)
-def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
-                 token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+@dapr_app.subscribe(pubsub='rabbitmq-pubsub', topic='news-queue')
+def news_handler(event_data=Body()):
+    message = event_data["data"]
+    logger.info(message)
+    asyncio.run(handle_news_request(message))
 
+
+@app.post("/news", response_model=dict)
+async def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+                       token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -190,14 +205,9 @@ def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks,
     if user_prefs.username != username:
         raise HTTPException(status_code=403, detail="Not authorized to request news.")
 
-    # Send the request to the queue (simulated with a background task)
-    background_tasks.add_task(fetch_news, username)
+    background_tasks.add_task(handle_news_request, user_prefs)
+
     return {"status": "News request initiated."}
-
-
-def fetch_news(username: str):
-    # Here, you would interact with the Accessor Service
-    print(f"Fetching news for {username}...")
 
 
 # RabbitMQ callback
@@ -208,40 +218,76 @@ def process_news_request(ch, method, properties, body):
 async def generate_summary(news: News):
     genai.configure(api_key=GEMINI_AI)
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    response = model.generate_content(news.content).text
+    logger.info(news.content)
+    try:
+        response = model.generate_content(f"Provide short summary of this news: {news.content}").text
+    except Exception:
+        return None
+
+    # await asyncio.sleep(10)
     return {"summary": response}
 
 
 async def handle_news_request(body):
     message = json.loads(body)
     username = message['username']
-    preferences = Preferences(**message['preferences'])
+    preferences = message['preferences']
+    # username = body.username
+    # preferences = body.preferences
+
+    categories = "&".join(preferences)
 
     # Check cache
-    cached_news = await cache.get(username)
-    if cached_news:
-        logger.info("Cache hit")
-        news_data = json.loads(cached_news)
-    else:
-        logger.info("Cache miss")
-        news_data = fetch_news(preferences.category)
-        await cache.set(username, json.dumps(news_data))
+    # cached_news = await cache.get(username)
+    # if cached_news:
+    #     logger.info("Cache hit")
+    #     news_data = json.loads(cached_news)
+    # else:
+    #     logger.info("Cache miss")
+    news_data = fetch_news(categories)
+    # await cache.set(username, json.dumps(news_data))
 
     # Analyze news using AI
-    analyzed_news = await generate_summary(News(content=news_data['results'][0]['description']))
+    analyzed_news = []
+    for news in news_data["results"]:
+        if news["description"] is not None:
+            summary = await generate_summary(News(content=news['description']))
+            if summary is not None:
+                analyzed_news.append(await generate_summary(News(content=news['description'])))
 
-    # Send notification logic goes here
+    # send_email(username, analyzed_news)
     logger.info(f"Analyzed news for {username}: {analyzed_news}")
 
 
-# Consume from RabbitMQ queue
-channel.basic_consume(queue='news_queue', on_message_callback=process_news_request, auto_ack=True)
+def fetch_news(category: str):
+    # Simulate fetching news from an external API
+    response = requests.get(f"https://newsdata.io/api/1/latest?apikey={NEWS_DATA_API}&q={category}")
+    return response.json()
 
-# Start consuming
-# logger.info('Waiting for messages. To exit press CTRL+C')
-# channel.start_consuming()
+
+def send_email(username: str, analyzed_news: list):
+    # Fetch user email from the database
+    db = next(get_db())
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        logger.error(f"User {username} not found")
+        return
+
+    email_body = f"Hello {username},\n\nHere is your news summary:\n\n{' '.join(analyzed_news)}\n\nBest regards,\nNews Aggregator"
+    msg = MIMEText(email_body)
+    msg['Subject'] = 'Your News Summary'
+    msg['From'] = SMTP_USERNAME
+    msg['To'] = user.email
+
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.sendmail(SMTP_USERNAME, [user.email], msg.as_string())
+        logger.info(f"Email sent to {username}")
+
 
 if __name__ == '__main__':
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=5005)
+    logger.info("Accessor Service started")

@@ -1,11 +1,14 @@
+import json
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 
+import pika
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import requests
+from dapr.clients import DaprClient
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('logs'):
@@ -33,6 +36,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # OAuth2PasswordBearer for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 
 # Pydantic models
@@ -84,11 +88,29 @@ def save_preferences(user_prefs: UserPreferences, token: str = Depends(oauth2_sc
 
 @app.post("/news", response_model=dict)
 def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, token: str = Depends(oauth2_scheme)):
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.post(f"{ACCESSOR_SERVICE_URL}/news", json=user_prefs.dict(), headers=headers)
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.json())
-    return response.json()
+    # headers = {"Authorization": f"Bearer {token}"}
+    # response = requests.post(f"{ACCESSOR_SERVICE_URL}/news", json=user_prefs.dict(), headers=headers)
+    # if response.status_code != 200:
+    #     raise HTTPException(status_code=response.status_code, detail=response.json())
+
+    # Send the news request to the RabbitMQ queue
+    # connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
+    # channel = connection.channel()
+    # channel.queue_declare(queue='news_queue')
+    #
+    # message = json.dumps({"username": user_prefs.username, "preferences": user_prefs.preferences})
+    # channel.basic_publish(exchange='', routing_key='news_queue', body=message)
+    # connection.close()
+    message = json.dumps({"username": user_prefs.username, "preferences": user_prefs.preferences})
+    with DaprClient() as dapr_client:
+        resp = dapr_client.publish_event(
+            pubsub_name='rabbitmq-pubsub',
+            topic_name='news-queue',
+            data=message.encode('utf-8'),
+        )
+        logger.debug(f"Published to queue: {message}, response: {resp}")
+
+    return {"status": "News request sent to queue."}
 
 
 if __name__ == '__main__':
