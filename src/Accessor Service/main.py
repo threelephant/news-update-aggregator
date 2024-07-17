@@ -125,6 +125,7 @@ class UserCreate(BaseModel):
 
 class UserPreferences(BaseModel):
     username: str
+    preferences: list[str]
     Authorization: str
 
 
@@ -190,24 +191,24 @@ def news_handler(event_data=Body()):
     asyncio.run(handle_news_request(message))
 
 
-@app.post("/news", response_model=dict)
-async def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
-                       token: str = Depends(oauth2_scheme)):
-    # credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
-    # try:
-    #     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    #     username = payload.get("sub")
-    #     if username is None:
-    #         raise credentials_exception
-    # except JWTError:
-    #     raise credentials_exception
-    #
-    # if user_prefs.username != username:
-    #     raise HTTPException(status_code=403, detail="Not authorized to request news.")
-
-    background_tasks.add_task(handle_news_request, user_prefs)
-
-    return {"status": "News request initiated."}
+# @app.post("/news", response_model=dict)
+# async def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+#                        token: str = Depends(oauth2_scheme)):
+#     # credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+#     # try:
+#     #     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#     #     username = payload.get("sub")
+#     #     if username is None:
+#     #         raise credentials_exception
+#     # except JWTError:
+#     #     raise credentials_exception
+#     #
+#     # if user_prefs.username != username:
+#     #     raise HTTPException(status_code=403, detail="Not authorized to request news.")
+#
+#     background_tasks.add_task(handle_news_request, user_prefs)
+#
+#     return {"status": "News request initiated."}
 
 
 # RabbitMQ callback
@@ -259,9 +260,10 @@ async def handle_news_request(body):
         news_data = fetch_news(categories)
         await cache.set(username, json.dumps(news_data), ex=7200)
 
-    formatted_news = "\n".join([f"Title: {item['title']}\nDescription: {item['description']}"
-                                for item in news_data["results"]])
-    summary = await generate_summary(formatted_news, categories)
+        news_data = "\n".join([f"Title: {item['title']}\nDescription: {item['description']}"
+                                    for item in news_data["results"]])
+
+    summary = await generate_summary(news_data, categories)
 
     send_email(username, summary)
     logger.info(f"Analyzed news for {username}: {summary}")

@@ -45,6 +45,7 @@ class UserCreate(BaseModel):
     password: str
 
 
+
 class UserPreferences(BaseModel):
     username: str
     preferences: list[str]
@@ -99,13 +100,8 @@ async def save_preferences(user_prefs: UserPreferences, token: str = Depends(oau
 
 
 @app.post("/news", response_model=dict)
-def request_news(user_prefs: UserPreferences, background_tasks: BackgroundTasks, token: str = Depends(oauth2_scheme)):
-    # headers = {"Authorization": f"Bearer {token}"}
-    # response = requests.post(f"{ACCESSOR_SERVICE_URL}/news", json=user_prefs.dict(), headers=headers)
-    # if response.status_code != 200:
-    #     raise HTTPException(status_code=response.status_code, detail=response.json())
-
-    message = json.dumps({"username": user_prefs.username, "preferences": user_prefs.preferences})
+def request_news(username: str, background_tasks: BackgroundTasks, token: str = Depends(oauth2_scheme)):
+    message = json.dumps({"username": username})
     with DaprClient() as dapr_client:
         resp = dapr_client.publish_event(
             pubsub_name='rabbitmq-pubsub',

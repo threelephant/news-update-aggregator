@@ -120,6 +120,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/dbname
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - REDIS_URL=redis://redis
     networks:
       - mynetwork
 
@@ -142,13 +143,6 @@ services:
     depends_on:
       - accessor-service
     network_mode: "service:accessor-service"
-
-
-  placement:
-    image: "daprio/dapr"
-    command: [ "./placement", "--port", "50006" ]
-    ports:
-      - "50006:50006"
 
   news-frontend:
     build: ./news-frontend
